@@ -56,23 +56,30 @@ class SQLiteDagStorage[F[_]: Bracket[?[_], Throwable]](
           .diff(block.justifications.map(_.validatorPublicKey).toSet)
           .toList
         // Will ignore existing entries, because genesis should only be the first block and can't be added twice
-        Update[(Validator, BlockHash, Long)](
+        Update[(Validator, BlockHash)](
           """|INSERT OR IGNORE INTO validator_latest_messages
-             |(validator, block_hash, rank)
-             |VALUES (?, ?, ?)""".stripMargin
-        ).updateMany(newValidators.map((_, blockSummary.blockHash, 0L)))
+             |(validator, block_hash)
+             |VALUES (?, ?)""".stripMargin
+        ).updateMany(newValidators.map((_, blockSummary.blockHash)))
       } else {
-        // Insert in case if new block has a higher rank than the previous max rank of validator
-        sql"""|INSERT OR REPLACE INTO validator_latest_messages
-              |SELECT ${blockSummary.validatorPublicKey} as validator,
-              |       ${blockSummary.blockHash} as block_hash,
-              |       ${blockSummary.rank} as rank
-              |WHERE NOT exists(
-              |        SELECT 1
-              |        FROM validator_latest_messages
-              |        WHERE validator = ${blockSummary.validatorPublicKey}
-              |          AND rank > ${blockSummary.rank}
-              |    )""".stripMargin.update.run
+        // Validator's latest message as seen from block's justifications.
+        // Assumes that validator's block always includes in its justifications previous message from its creator.
+        val validatorLatestMessage =
+          blockSummary.justifications.find(_.validatorPublicKey == blockSummary.validatorPublicKey)
+        validatorLatestMessage.fold {
+          // No previous message visible from the justifications.
+          // This is the first block from this validator (at least according to the creator of the message).
+          sql""" INSERT INTO validator_latest_messages (validator, block_hash)
+                 VALUES (${blockSummary.validatorPublicKey}, ${blockSummary.blockHash})""".stripMargin.update.run
+        } { lastMessage =>
+          // Insert if new block doesn't cite latest message (this is an equivocation).
+          // Otherwise, update entry.
+          sql"""|DELETE FROM validator_latest_messages
+               |WHERE validator = ${blockSummary.validatorPublicKey}
+               |AND block_hash = ${lastMessage.latestBlockHash}""".stripMargin.update.run >>
+            sql"""|INSERT OR IGNORE INTO validator_latest_messages (validator, block_hash)
+                |VALUES (${blockSummary.validatorPublicKey}, ${blockSummary.blockHash})""".stripMargin.update.run
+        }
       }
     }
 
@@ -184,36 +191,34 @@ class SQLiteDagStorage[F[_]: Bracket[?[_], Throwable]](
       .transact(xa)
       .groupByRank
 
-  override def latestMessageHash(validator: Validator): F[Option[BlockHash]] =
+  override def latestMessageHash(validator: Validator): F[Set[BlockHash]] =
     sql"""|SELECT block_hash
           |FROM validator_latest_messages
           |WHERE validator=$validator""".stripMargin
       .query[BlockHash]
-      .option
+      .to[Set]
       .transact(xa)
 
-  override def latestMessage(validator: Validator): F[Option[Message]] =
+  override def latestMessage(validator: Validator): F[Set[Message]] =
     sql"""|SELECT m.data
           |FROM validator_latest_messages v
           |INNER JOIN block_metadata m
           |ON v.validator=$validator AND v.block_hash=m.block_hash""".stripMargin
       .query[BlockSummary]
-      .option
+      .to[List]
       .transact(xa)
-      .flatMap {
-        case None     => none[Message].pure[F]
-        case Some(bs) => toMessageSummaryF(bs).map(Some(_))
-      }
+      .flatMap(_.traverse(toMessageSummaryF))
+      .map(_.toSet)
 
-  override def latestMessageHashes: F[Map[Validator, BlockHash]] =
+  override def latestMessageHashes: F[Map[Validator, Set[BlockHash]]] =
     sql"""|SELECT *
           |FROM validator_latest_messages""".stripMargin
       .query[(Validator, BlockHash)]
       .to[List]
       .transact(xa)
-      .map(_.toMap)
+      .map(_.groupBy(_._1).mapValues(_.map(_._2).toSet))
 
-  override def latestMessages: F[Map[Validator, Message]] =
+  override def latestMessages: F[Map[Validator, Set[Message]]] =
     sql"""|SELECT v.validator, m.data
           |FROM validator_latest_messages v
           |INNER JOIN block_metadata m
@@ -222,7 +227,7 @@ class SQLiteDagStorage[F[_]: Bracket[?[_], Throwable]](
       .to[List]
       .transact(xa)
       .flatMap(_.traverse { case (v, bs) => toMessageSummaryF(bs).map(v -> _) })
-      .map(_.toMap)
+      .map(_.groupBy(_._1).mapValues(_.map(_._2).toSet))
 
   private val toMessageSummaryF: BlockSummary => F[Message] = bs =>
     MonadThrowable[F].fromTry(Message.fromBlockSummary(bs))

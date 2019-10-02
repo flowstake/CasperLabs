@@ -81,7 +81,7 @@ class ForkchoiceTest
         forkchoice <- Estimator.tips[Task](
                        dag,
                        genesis.blockHash,
-                       Map.empty[Estimator.Validator, Estimator.BlockHash],
+                       Map.empty,
                        EquivocationsTracker.empty
                      )
       } yield forkchoice.head should be(genesis.blockHash)
@@ -280,7 +280,7 @@ class ForkchoiceTest
       dag: DagRepresentation[Task],
       bonds: Seq[Bond],
       supporterForBlocks: Map[BlockHash, Seq[Validator]],
-      latestMessageHashes: Map[Validator, BlockHash]
+      latestMessageHashes: Map[Validator, Set[BlockHash]]
   ): Unit = {
     val equivocatorsGen: Gen[Set[Validator]] =
       for {
@@ -289,7 +289,7 @@ class ForkchoiceTest
       } yield idx.map(_.validatorPublicKey).toSet
 
     val lca = DagOperations
-      .latestCommonAncestorsMainParent(dag, latestMessageHashes.values.toList)
+      .latestCommonAncestorsMainParent(dag, latestMessageHashes.values.flatten.toList)
       .runSyncUnsafe(1.second)
 
     forAll(equivocatorsGen) { equivocators: Set[Validator] =>

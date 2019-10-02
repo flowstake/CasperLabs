@@ -88,7 +88,7 @@ class EquivocationDetectorTest
       state          <- casperState.read
       _ <- EquivocationDetector.detectVisibleFromJustifications(
             dag,
-            latestMessages.mapValues(_.messageHash),
+            latestMessages.mapValues(_.map(_.messageHash)),
             state.equivocationsTracker
           ) shouldBeF visibleEquivocatorExpected
     } yield block

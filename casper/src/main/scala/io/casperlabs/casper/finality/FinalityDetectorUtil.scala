@@ -3,8 +3,10 @@ package io.casperlabs.casper.finality
 import cats.Monad
 import cats.implicits._
 import io.casperlabs.casper.Estimator.{BlockHash, Validator}
+import io.casperlabs.casper.PrettyPrinter
 import io.casperlabs.casper.equivocations.EquivocationsTracker
 import io.casperlabs.casper.util.{DagOperations, ProtoUtil}
+import io.casperlabs.catscontrib.MonadThrowable
 import io.casperlabs.models.Message
 import io.casperlabs.storage.dag.DagRepresentation
 
@@ -76,24 +78,34 @@ object FinalityDetectorUtil {
   /**
     * Get level zero messages of the specified validator and specified candidateBlock
     */
-  private[casper] def levelZeroMsgsOfValidator[F[_]: Monad](
+  private[casper] def levelZeroMsgsOfValidator[F[_]: MonadThrowable](
       dag: DagRepresentation[F],
       validator: Validator,
       candidateBlockHash: BlockHash
   ): F[List[Message]] =
     dag.latestMessage(validator).flatMap {
-      case Some(latestMsgByValidator) =>
-        DagOperations
-          .bfTraverseF[F, Message](List(latestMsgByValidator))(
-            previousAgreedBlockFromTheSameValidator(
-              dag,
-              _,
-              candidateBlockHash,
-              validator
+      case validatorLatestMessages =>
+        if (validatorLatestMessages.isEmpty) {
+          List.empty[Message].pure[F]
+        } else if (validatorLatestMessages.size > 1) {
+          MonadThrowable[F].raiseError(
+            new IllegalArgumentException(
+              s"Finalizer should be fed only honest validator. ${PrettyPrinter.buildString(validator)} equivocated with blocks ${validatorLatestMessages
+                .map(m => PrettyPrinter.buildString(m.messageHash))}"
             )
           )
-          .toList
-      case None => List.empty[Message].pure[F]
+        } else {
+          DagOperations
+            .bfTraverseF[F, Message](validatorLatestMessages.toList)(
+              previousAgreedBlockFromTheSameValidator(
+                dag,
+                _,
+                candidateBlockHash,
+                validator
+              )
+            )
+            .toList
+        }
     }
 
   /*

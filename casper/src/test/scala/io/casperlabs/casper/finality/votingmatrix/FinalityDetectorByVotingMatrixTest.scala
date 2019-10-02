@@ -217,7 +217,8 @@ class FinalityDetectorByVotingMatrixTest
                        Seq(genesis.blockHash),
                        genesis.blockHash,
                        v1,
-                       bonds
+                       bonds,
+                       HashMap(v1 -> genesis.blockHash)
                      )
           _ = c1 shouldBe None
           (b2, c2) <- createBlockAndUpdateFinalityDetector[Task](
@@ -225,7 +226,7 @@ class FinalityDetectorByVotingMatrixTest
                        genesis.blockHash,
                        v2,
                        bonds,
-                       HashMap(v1 -> b1.blockHash)
+                       HashMap(v1 -> b1.blockHash, v2 -> genesis.blockHash)
                      )
           _ = c2 shouldBe None
           (b3, c3) <- createBlockAndUpdateFinalityDetector[Task](
@@ -233,7 +234,7 @@ class FinalityDetectorByVotingMatrixTest
                        genesis.blockHash,
                        v3,
                        bonds,
-                       HashMap(v1 -> b1.blockHash, v2 -> b2.blockHash)
+                       HashMap(v1 -> b1.blockHash, v2 -> b2.blockHash, v3 -> genesis.blockHash)
                      )
           _ = c3 shouldBe None
           (b4, c4) <- createBlockAndUpdateFinalityDetector[Task](

@@ -116,7 +116,8 @@ class VotingMatrixTest extends FlatSpec with Matchers with BlockGenerator with S
                  Seq(genesis.blockHash),
                  genesis.blockHash,
                  v1,
-                 updatedBonds
+                 updatedBonds,
+                 justifications = Map(v1 -> genesis.blockHash)
                )
           _ <- checkWeightMap(Map(v1 -> 10, v2 -> 10)) // don't change, because b1 haven't finalized
           _ <- checkMatrix(
@@ -137,7 +138,8 @@ class VotingMatrixTest extends FlatSpec with Matchers with BlockGenerator with S
                  Seq(genesis.blockHash),
                  genesis.blockHash,
                  v2,
-                 bonds
+                 bonds,
+                 justifications = Map(v2 -> genesis.blockHash)
                )
           _ <- checkMatrix(
                 Map(

@@ -615,7 +615,7 @@ class ValidationImpl[F[_]: MonadThrowable: FunctorRaise[?[_], InvalidBlock]: Log
             val estimateString =
               computedParentHashes.map(hash => PrettyPrinter.buildString(hash)).mkString(",")
             val justificationString = latestMessagesHashes.values
-              .map(hash => PrettyPrinter.buildString(hash))
+              .map(hashes => hashes.map(PrettyPrinter.buildString).mkString("[", ",", "]"))
               .mkString(",")
             val message =
               s"block parents ${parentsString} did not match estimate ${estimateString} based on justification ${justificationString}."

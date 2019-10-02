@@ -2,6 +2,7 @@ package io.casperlabs.casper.finality.singlesweep
 
 import cats.implicits._
 import io.casperlabs.casper.Estimator.{BlockHash, Validator}
+import io.casperlabs.casper.PrettyPrinter
 import io.casperlabs.casper.finality.FinalityDetectorUtil
 import io.casperlabs.casper.util.{DagOperations, ProtoUtil}
 import io.casperlabs.catscontrib.MonadThrowable
@@ -271,18 +272,25 @@ class FinalityDetectorBySingleSweepImpl[F[_]: MonadThrowable: Log] extends Final
   ): F[List[Validator]] =
     weights.keys.toList.filterA { validator =>
       for {
-        latestMessageHash <- dag
-                              .latestMessageHash(
-                                validator
-                              )
-        result <- latestMessageHash match {
-                   case Some(b) =>
-                     ProtoUtil.isInMainChain[F](
-                       dag,
-                       candidateBlockHash,
-                       b
+        validatorLatestMessages <- dag
+                                    .latestMessageHash(
+                                      validator
+                                    )
+        result <- if (validatorLatestMessages.isEmpty) {
+                   false.pure[F]
+                 } else if (validatorLatestMessages.size > 1) {
+                   MonadThrowable[F].raiseError[Boolean](
+                     new IllegalArgumentException(
+                       s"Finalizer should be fed only honest validator. ${PrettyPrinter.buildString(validator)} equivocated with blocks ${validatorLatestMessages
+                         .map(PrettyPrinter.buildString)}"
                      )
-                   case _ => false.pure[F]
+                   )
+                 } else {
+                   ProtoUtil.isInMainChain[F](
+                     dag,
+                     candidateBlockHash,
+                     validatorLatestMessages.head // It should be safe since `validatorLatestMessageHashes` is neither empty nor has more elements than 1
+                   )
                  }
       } yield result
     }

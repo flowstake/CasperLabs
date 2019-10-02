@@ -2,8 +2,9 @@ package io.casperlabs.casper.util
 
 import java.util.NoSuchElementException
 
-import cats.Monad
+import cats.{Monad, MonoidK}
 import cats.implicits._
+import cats.kernel.Monoid
 import com.google.protobuf.ByteString
 import io.casperlabs.casper.Estimator.{BlockHash, Validator}
 import io.casperlabs.casper.consensus.Block.{GlobalState, Justification, MessageType}
@@ -348,24 +349,26 @@ object ProtoUtil {
 
   def getJustificationMsgHashes(
       justifications: Seq[Justification]
-  ): immutable.Map[Validator, BlockHash] =
-    justifications.foldLeft(Map.empty[Validator, BlockHash]) {
+  ): immutable.Map[Validator, Set[BlockHash]] =
+    justifications.foldLeft(Map.empty[Validator, Set[BlockHash]]) {
       case (acc, Justification(validator, block)) =>
-        acc.updated(validator, block)
+        acc
+          .get(validator)
+          .fold(acc.updated(validator, Set(block)))(s => acc.updated(validator, s + block))
     }
 
   def getJustificationMsgs[F[_]: MonadThrowable](
       dag: DagRepresentation[F],
       justifications: Seq[Justification]
-  ): F[Map[Validator, Message]] =
-    justifications.toList.foldM(Map.empty[Validator, Message]) {
+  ): F[Map[Validator, Set[Message]]] =
+    justifications.toList.foldM(Map.empty[Validator, Set[Message]]) {
       case (acc, Justification(validator, hash)) =>
         dag.lookup(hash).flatMap {
           case Some(meta) =>
-            acc.updated(validator, meta).pure[F]
+            acc.combine(Map(validator -> Set(meta))).pure[F]
 
           case None =>
-            MonadThrowable[F].raiseError[Map[Validator, Message]](
+            MonadThrowable[F].raiseError(
               new NoSuchElementException(
                 s"DagStorage is missing hash ${PrettyPrinter.buildString(hash)}"
               )

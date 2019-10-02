@@ -112,7 +112,7 @@ class DagOperationsTest extends FlatSpec with Matchers with BlockGenerator with 
         } yield result
   }
 
-  "Latest Common Ancestor" should "be computed properly for various j-DAGs" in withStorage {
+  "Latest Common Ancestor" should "be computed properly for various DAGs" in withStorage {
     implicit blockStorage => implicit dagStorage => implicit deployStorage =>
       val v1 = generateValidator("One")
       val v2 = generateValidator("Two")
@@ -132,7 +132,10 @@ class DagOperationsTest extends FlatSpec with Matchers with BlockGenerator with 
         b3             <- createAndStoreBlock[Task](Seq(genesis.blockHash), v3)
         dag            <- dagStorage.getRepresentation
         latestMessages <- dag.latestMessageHashes
-        lca            <- DagOperations.latestCommonAncestorsMainParent(dag, latestMessages.values.toList)
+        lca <- DagOperations.latestCommonAncestorsMainParent(
+                dag,
+                latestMessages.values.flatten.toList
+              )
       } yield assert(lca == genesis.blockHash)
 
       /* 2) DAG looks like this:
@@ -149,7 +152,10 @@ class DagOperationsTest extends FlatSpec with Matchers with BlockGenerator with 
         b2             <- createAndStoreBlock[Task](Seq(genesis.blockHash), v2)
         dag            <- dagStorage.getRepresentation
         latestMessages <- dag.latestMessageHashes
-        lca            <- DagOperations.latestCommonAncestorsMainParent(dag, latestMessages.values.toList)
+        lca <- DagOperations.latestCommonAncestorsMainParent(
+                dag,
+                latestMessages.values.flatten.toList
+              )
       } yield assert(lca == genesis.blockHash)
 
       /* 3) DAG looks like this:
@@ -175,7 +181,10 @@ class DagOperationsTest extends FlatSpec with Matchers with BlockGenerator with 
         b6             <- createAndStoreBlock[Task](Seq(b5.blockHash), v3)
         dag            <- dagStorage.getRepresentation
         latestMessages <- dag.latestMessageHashes
-        lca            <- DagOperations.latestCommonAncestorsMainParent(dag, latestMessages.values.toList)
+        lca <- DagOperations.latestCommonAncestorsMainParent(
+                dag,
+                latestMessages.values.flatten.toList
+              )
       } yield assert(lca == genesis.blockHash)
 
       /* 4) DAG looks like this:
@@ -201,7 +210,10 @@ class DagOperationsTest extends FlatSpec with Matchers with BlockGenerator with 
         b6             <- createAndStoreBlock[Task](Seq(b5.blockHash), v3)
         dag            <- dagStorage.getRepresentation
         latestMessages <- dag.latestMessageHashes
-        lca            <- DagOperations.latestCommonAncestorsMainParent(dag, latestMessages.values.toList)
+        lca <- DagOperations.latestCommonAncestorsMainParent(
+                dag,
+                latestMessages.values.flatten.toList
+              )
       } yield assert(lca == genesis.blockHash)
 
       /* 5) DAG looks like this:
@@ -226,7 +238,10 @@ class DagOperationsTest extends FlatSpec with Matchers with BlockGenerator with 
         b7             <- createAndStoreBlock[Task](Seq(b4.blockHash), v3)
         dag            <- dagStorage.getRepresentation
         latestMessages <- dag.latestMessageHashes
-        lca            <- DagOperations.latestCommonAncestorsMainParent(dag, latestMessages.values.toList)
+        lca <- DagOperations.latestCommonAncestorsMainParent(
+                dag,
+                latestMessages.values.flatten.toList
+              )
       } yield assert(lca == b4.blockHash)
 
       /* 6) DAG looks like:
@@ -248,23 +263,66 @@ class DagOperationsTest extends FlatSpec with Matchers with BlockGenerator with 
        */
 
       for {
-        genesis      <- createAndStoreBlock[Task](Seq(), ByteString.EMPTY)
-        a            <- createAndStoreBlock[Task](Seq(genesis.blockHash), v1)
-        b            <- createAndStoreBlock[Task](Seq(genesis.blockHash), v2)
-        c            <- createAndStoreBlock[Task](Seq(genesis.blockHash), v3)
-        d            <- createAndStoreBlock[Task](Seq(a.blockHash), v1)
-        e            <- createAndStoreBlock[Task](Seq(c.blockHash), v2)
-        f            <- createAndStoreBlock[Task](Seq(d.blockHash), v2)
-        g            <- createAndStoreBlock[Task](Seq(f.blockHash), v1)
-        h            <- createAndStoreBlock[Task](Seq(f.blockHash), v2)
-        i            <- createAndStoreBlock[Task](Seq(f.blockHash), v3)
-        j            <- createAndStoreBlock[Task](Seq(g.blockHash), v1)
-        k            <- createAndStoreBlock[Task](Seq(h.blockHash), v2)
-        l            <- createAndStoreBlock[Task](Seq(i.blockHash), v3)
-        m            <- createAndStoreBlock[Task](Seq(l.blockHash), v2)
+        genesis <- createAndStoreBlock[Task](Seq(), ByteString.EMPTY)
+        a       <- createAndStoreBlock[Task](Seq(genesis.blockHash), v1)
+        b       <- createAndStoreBlock[Task](Seq(genesis.blockHash), v2)
+        c       <- createAndStoreBlock[Task](Seq(genesis.blockHash), v3)
+        d <- createAndStoreBlock[Task](
+              Seq(a.blockHash),
+              v1,
+              justifications = Map(v1 -> a.blockHash)
+            )
+        e <- createAndStoreBlock[Task](
+              Seq(c.blockHash),
+              v2,
+              justifications = Map(v2 -> b.blockHash)
+            )
+        f <- createAndStoreBlock[Task](
+              Seq(d.blockHash),
+              v2,
+              justifications = Map(v2 -> e.blockHash)
+            )
+        g <- createAndStoreBlock[Task](
+              Seq(f.blockHash),
+              v1,
+              justifications = Map(v1 -> d.blockHash)
+            )
+        h <- createAndStoreBlock[Task](
+              Seq(f.blockHash),
+              v2,
+              justifications = Map(v2 -> f.blockHash)
+            )
+        i <- createAndStoreBlock[Task](
+              Seq(f.blockHash),
+              v3,
+              justifications = Map(v3 -> c.blockHash)
+            )
+        j <- createAndStoreBlock[Task](
+              Seq(g.blockHash),
+              v1,
+              justifications = Map(v1 -> g.blockHash)
+            )
+        k <- createAndStoreBlock[Task](
+              Seq(h.blockHash),
+              v2,
+              justifications = Map(v2 -> h.blockHash)
+            )
+        l <- createAndStoreBlock[Task](
+              Seq(i.blockHash),
+              v3,
+              justifications = Map(v3 -> i.blockHash)
+            )
+        m <- createAndStoreBlock[Task](
+              Seq(l.blockHash),
+              v2,
+              justifications = Map(v2 -> k.blockHash)
+            )
         dag          <- dagStorage.getRepresentation
         latestBlocks <- dag.latestMessageHashes
-        lca          <- DagOperations.latestCommonAncestorsMainParent(dag, latestBlocks.values.toList)
+        lca <- DagOperations.latestCommonAncestorsMainParent(
+                dag,
+                latestBlocks.values.flatten.toList
+              )
       } yield assert(lca == f.blockHash)
   }
 

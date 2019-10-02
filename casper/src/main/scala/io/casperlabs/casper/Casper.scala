@@ -29,7 +29,7 @@ trait MultiParentCasper[F[_]] {
   def deploy(deployData: Deploy): F[Either[Throwable, Unit]]
   def estimator(
       dag: DagRepresentation[F],
-      latestMessages: Map[ByteString, ByteString]
+      latestMessages: Map[ByteString, Set[ByteString]]
   ): F[List[ByteString]]
   def createBlock: F[CreateBlockStatus]
   ////
@@ -45,15 +45,6 @@ trait MultiParentCasper[F[_]] {
 
 object MultiParentCasper extends MultiParentCasperInstances {
   def apply[F[_]](implicit instance: MultiParentCasper[F]): MultiParentCasper[F] = instance
-
-  def forkChoiceTip[F[_]: MultiParentCasper: MonadThrowable: BlockStorage]: F[Block] =
-    for {
-      dag            <- MultiParentCasper[F].dag
-      latestMessages <- dag.latestMessageHashes
-      tipHashes      <- MultiParentCasper[F].estimator(dag, latestMessages)
-      tipHash        = tipHashes.head
-      tip            <- ProtoUtil.unsafeGetBlock[F](tipHash)
-    } yield tip
 }
 
 sealed abstract class MultiParentCasperInstances {

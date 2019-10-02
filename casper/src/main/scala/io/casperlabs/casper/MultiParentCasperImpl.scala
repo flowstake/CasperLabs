@@ -364,7 +364,7 @@ class MultiParentCasperImpl[F[_]: Sync: Log: Metrics: Time: FinalityDetector: Bl
   /** Return the list of tips. */
   def estimator(
       dag: DagRepresentation[F],
-      latestMessagesHashes: Map[ByteString, BlockHash]
+      latestMessagesHashes: Map[ByteString, Set[BlockHash]]
   ): F[List[BlockHash]] =
     Metrics[F].timer("estimator") {
       Cell[F, CasperState].read
@@ -398,38 +398,40 @@ class MultiParentCasperImpl[F[_]: Sync: Log: Metrics: Time: FinalityDetector: Bl
         for {
           dag            <- dag
           latestMessages <- dag.latestMessages
-          tipHashes      <- estimator(dag, latestMessages.mapValues(_.messageHash)).map(_.toVector)
+          tipHashes      <- estimator(dag, latestMessages.mapValues(_.map(_.messageHash)))
           tips           <- tipHashes.traverse(ProtoUtil.unsafeGetBlock[F])
           merged         <- ExecEngineUtil.merge[F](tips, dag)
           parents        = merged.parents
           _ <- Log[F].info(
                 s"${parents.size} parents out of ${tipHashes.size} latest blocks will be used."
               )
-          timestamp        <- Time[F].currentMillis
-          remainingHashes  <- remainingDeploysHashes(dag, parents, timestamp) // TODO: Should be streaming all the way down
-          bondedValidators = bonds(parents.head).map(_.validatorPublicKey).toSet
-          //We ensure that only the justifications given in the block are those
-          //which are bonded validators in the chosen parent. This is safe because
-          //any latest message not from a bonded validator will not change the
-          //final fork-choice.
-          latestMessages   <- dag.latestMessages
-          bondedLatestMsgs = latestMessages.filter { case (v, _) => bondedValidators.contains(v) }
-          justifications   = toJustification(bondedLatestMsgs.values.toSeq)
-          rank             = ProtoUtil.nextRank(bondedLatestMsgs.values.toSeq)
-          protocolVersion  <- CasperLabsProtocolVersions[F].versionAt(rank)
+          timestamp       <- Time[F].currentMillis
+          remainingHashes <- remainingDeploysHashes(dag, parents, timestamp) // TODO: Should be streaming all the way down
           proposal <- if (remainingHashes.nonEmpty || parents.length > 1) {
-                       createProposal(
-                         dag,
-                         latestMessages,
-                         merged,
-                         remainingHashes,
-                         publicKey,
-                         privateKey,
-                         sigAlgorithm,
-                         protocolVersion,
-                         timestamp,
-                         rank
-                       )
+                       val bondedValidators = bonds(parents.head).map(_.validatorPublicKey).toSet
+                       //We ensure that only the justifications given in the block are those
+                       //which are bonded validators in the chosen parent. This is safe because
+                       //any latest message not from a bonded validator will not change the
+                       //final fork-choice.
+                       val bondedLatestMsgs = latestMessages.filter {
+                         case (v, _) => bondedValidators.contains(v)
+                       }
+                       val rank = ProtoUtil.nextRank(bondedLatestMsgs.values.flatten.toSeq)
+                       for {
+                         protocolVersion <- CasperLabsProtocolVersions[F].versionAt(rank)
+                         proposal <- createProposal(
+                                      dag,
+                                      latestMessages,
+                                      merged,
+                                      remainingHashes,
+                                      publicKey,
+                                      privateKey,
+                                      sigAlgorithm,
+                                      protocolVersion,
+                                      timestamp,
+                                      rank
+                                    )
+                       } yield proposal
                      } else {
                        CreateBlockStatus.noNewDeploys.pure[F]
                      }
@@ -442,6 +444,24 @@ class MultiParentCasperImpl[F[_]: Sync: Log: Metrics: Time: FinalityDetector: Bl
       }
     case None => CreateBlockStatus.readOnlyMode.pure[F]
   }
+
+  // Returns latest messages from honest validators
+  private def latestMessagesHonestValidators(
+      dag: DagRepresentation[F],
+      casperState: Cell[F, CasperState]
+  ): F[Map[Validator, Message]] =
+    (
+      casperState.read.map(_.equivocationsTracker),
+      dag.latestMessages
+    ).mapN {
+      case (equivocationsTracker, latestMessages) =>
+        latestMessages.collect {
+          case (v, messages)
+              if !equivocationsTracker
+                .contains(v) && messages.size == 1 =>
+            (v, messages.head)
+        }
+    }
 
   def lastFinalizedBlock: F[Block] =
     for {
@@ -499,7 +519,7 @@ class MultiParentCasperImpl[F[_]: Sync: Log: Metrics: Time: FinalityDetector: Bl
   /** Execute a set of deploys in the context of chosen parents. Compile them into a block if everything goes fine. */
   private def createProposal(
       dag: DagRepresentation[F],
-      latestMessages: Map[ByteString, Message],
+      latestMessages: Map[ByteString, Set[Message]],
       merged: ExecEngineUtil.MergeResult[ExecEngineUtil.TransformMap, Block],
       remainingHashes: Set[BlockHash],
       validatorId: Keys.PublicKey,
@@ -511,7 +531,7 @@ class MultiParentCasperImpl[F[_]: Sync: Log: Metrics: Time: FinalityDetector: Bl
   ): F[CreateBlockStatus] =
     Metrics[F].timer("createProposal") {
       // TODO: Remove redundant justifications.
-      val justifications = toJustification(latestMessages.values.toSeq)
+      val justifications = toJustification(latestMessages.values.flatten.toSeq)
       val deployStream =
         DeployStorageReader[F]
           .getByHashes(remainingHashes)
@@ -529,7 +549,9 @@ class MultiParentCasperImpl[F[_]: Sync: Log: Metrics: Time: FinalityDetector: Bl
         } else {
           // Start numbering from 1 (validator's first block seqNum = 1)
           val validatorSeqNum =
-            latestMessages.get(ByteString.copyFrom(validatorId)).fold(0)(_.validatorMsgSeqNum + 1)
+            latestMessages
+              .get(ByteString.copyFrom(validatorId))
+              .fold(0)(_.toList.maxBy(_.validatorMsgSeqNum).validatorMsgSeqNum + 1)
           val block = ProtoUtil.block(
             justifications,
             checkpoint.preStateHash,

@@ -103,36 +103,39 @@ object EquivocationDetector {
       block: Block
   ): F[Boolean] =
     for {
-      maybeLatestMessageOfCreator <- dag.latestMessage(block.getHeader.validatorPublicKey)
-      equivocated <- maybeLatestMessageOfCreator match {
-                      case None =>
-                        // It is the first block by that validator
+      validatorLatestMessages <- dag.latestMessage(block.getHeader.validatorPublicKey)
+      equivocated <- if (validatorLatestMessages.isEmpty) {
+                      // It is the first block by that validator
+                      false.pure[F]
+                    } else {
+                      if (creatorJustificationHash(block)
+                            .filter(validatorLatestMessages.map(_.messageHash).contains)
+                            .isDefined) {
+                        // Directly reference latestMessage of creator of the block
                         false.pure[F]
-                      case Some(latestMessageOfCreator) =>
-                        if (creatorJustificationHash(block)
-                              .filter(_ == latestMessageOfCreator.messageHash)
-                              .isDefined) {
-                          // Directly reference latestMessage of creator of the block
-                          false.pure[F]
-                        } else
-                          for {
-                            message <- MonadThrowable[F].fromTry(Message.fromBlock(block))
-                            stream  = toposortJDagDesc(dag, message)
-                            // Find whether the block cites latestMessageOfCreator
-                            decisionPointBlock <- stream.find(
-                                                   b =>
-                                                     b == latestMessageOfCreator || b.rank < latestMessageOfCreator.rank
-                                                 )
-                            equivocated = decisionPointBlock != latestMessageOfCreator.some
-                            _ <- Log[F]
-                                  .warn(
-                                    s"Found equivocation: justifications of block ${PrettyPrinter
-                                      .buildString(block)} don't cite the latest message by validator ${PrettyPrinter
-                                      .buildString(block.getHeader.validatorPublicKey)}: ${PrettyPrinter
-                                      .buildString(latestMessageOfCreator.messageHash)}"
-                                  )
-                                  .whenA(equivocated)
-                          } yield equivocated
+                      } else
+                        validatorLatestMessages.toList
+                          .traverse { latestMessageOfCreator =>
+                            for {
+                              message <- MonadThrowable[F].fromTry(Message.fromBlock(block))
+                              stream  = toposortJDagDesc(dag, message)
+                              // Find whether the block cites latestMessageOfCreator
+                              decisionPointBlock <- stream.find(
+                                                     b =>
+                                                       b == latestMessageOfCreator || b.rank < latestMessageOfCreator.rank
+                                                   )
+                              equivocated = decisionPointBlock != latestMessageOfCreator.some
+                              _ <- Log[F]
+                                    .warn(
+                                      s"Found equivocation: justifications of block ${PrettyPrinter
+                                        .buildString(block)} don't cite the latest message by validator ${PrettyPrinter
+                                        .buildString(block.getHeader.validatorPublicKey)}: ${PrettyPrinter
+                                        .buildString(latestMessageOfCreator.messageHash)}"
+                                    )
+                                    .whenA(equivocated)
+                            } yield equivocated
+                          }
+                          .map(_.exists(identity))
                     }
     } yield equivocated
 
@@ -172,7 +175,7 @@ object EquivocationDetector {
     */
   def detectVisibleFromJustifications[F[_]: Monad](
       dag: DagRepresentation[F],
-      justificationMsgHashes: Map[Validator, BlockHash],
+      justificationMsgHashes: Map[Validator, Set[BlockHash]],
       equivocationsTracker: EquivocationsTracker
   ): F[Set[Validator]] =
     equivocationsTracker.min match {
@@ -181,7 +184,7 @@ object EquivocationDetector {
       case Some(minRank) =>
         for {
           justificationMessages <- justificationMsgHashes.values.toList
-                                    .traverse(dag.lookup)
+                                    .flatTraverse(_.toList.traverse(dag.lookup))
                                     .map(_.flatten)
           implicit0(blockTopoOrdering: Ordering[Message]) = DagOperations.blockTopoOrderingDesc
 

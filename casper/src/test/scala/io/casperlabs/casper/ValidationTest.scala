@@ -87,18 +87,24 @@ class ValidationTest
       bonds: Seq[Bond] = Seq.empty[Bond],
       creator: Validator = ByteString.EMPTY
   ): F[Block] =
-    (0 until length).foldLeft(createAndStoreBlock[F](Seq.empty, bonds = bonds)) {
+    (0 until length).foldLeft(
+      createAndStoreBlock[F](
+        Seq.empty,
+        bonds = bonds,
+        justifications = Map.empty[Validator, BlockHash]
+      )
+    ) {
       case (block, _) =>
         for {
-          bprev         <- block
-          dag           <- IndexedDagStorage[F].getRepresentation
-          latestMsgs    <- dag.latestMessages
-          justification = latestMsgs.map { case (v, b) => (v, b.messageHash) }
-          bnext <- createAndStoreBlock[F](
+          bprev          <- block
+          dag            <- IndexedDagStorage[F].getRepresentation
+          latestMsgs     <- dag.latestMessages
+          justifications = latestMsgs.mapValues(_.map(_.messageHash))
+          bnext <- createAndStoreBlockNew[F](
                     Seq(bprev.blockHash),
-                    creator = creator,
-                    bonds = bonds,
-                    justifications = justification
+                    creator,
+                    bonds,
+                    justifications
                   )
         } yield bnext
     }

@@ -2,6 +2,7 @@ package io.casperlabs.casper.util
 
 import cats.implicits._
 import com.google.protobuf.ByteString
+import io.casperlabs.casper.Estimator.BlockHash
 import io.casperlabs.casper.consensus.{Block, Bond}
 import io.casperlabs.casper.equivocations.EquivocationsTracker
 import io.casperlabs.casper.finality.FinalityDetectorUtil
@@ -13,6 +14,7 @@ import io.casperlabs.casper.util.ProtoUtil._
 import io.casperlabs.casper.util.execengine.ExecutionEngineServiceStub
 import io.casperlabs.models.Message
 import io.casperlabs.p2p.EffectsTestInstances.LogStub
+import io.casperlabs.storage.dag.DagRepresentation.Validator
 import io.casperlabs.storage.dag._
 import monix.eval.Task
 import org.scalatest.{Assertion, FlatSpec, Matchers}

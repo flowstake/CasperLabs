@@ -25,6 +25,12 @@ object Estimator {
   ): F[List[BlockHash]] =
     for {
       latestMessageHashes <- dag.latestMessageHashes
+                              .map(_.collect {
+                                case (v, messages)
+                                    if !equivocationsTracker.contains(v) && messages.size == 1 =>
+                                  // Honest validator should have only one "latest message"
+                                  v -> messages.head
+                              })
       result <- Estimator
                  .tips[F](dag, genesis, latestMessageHashes, equivocationsTracker)
     } yield result
@@ -33,7 +39,7 @@ object Estimator {
   def tips[F[_]: MonadThrowable](
       dag: DagRepresentation[F],
       genesis: BlockHash,
-      latestMessageHashes: Map[Validator, BlockHash],
+      latestMessageHashes: Map[Validator, Set[BlockHash]],
       equivocationsTracker: EquivocationsTracker
   ): F[List[BlockHash]] = {
 
@@ -73,7 +79,10 @@ object Estimator {
     for {
       lca <- if (latestMessageHashes.isEmpty) genesis.pure[F]
             else
-              DagOperations.latestCommonAncestorsMainParent(dag, latestMessageHashes.values.toList)
+              DagOperations.latestCommonAncestorsMainParent(
+                dag,
+                latestMessageHashes.values.flatten.toList
+              )
       equivocatingValidators <- EquivocationDetector.detectVisibleFromJustifications(
                                  dag,
                                  latestMessageHashes,
@@ -81,7 +90,7 @@ object Estimator {
                                )
       scores           <- lmdScoring(dag, lca, latestMessageHashes, equivocatingValidators)
       newMainParent    <- forkChoiceTip(dag, lca, scores)
-      parents          <- tipsOfLatestMessages(latestMessageHashes.values.toList, scores)
+      parents          <- tipsOfLatestMessages(latestMessageHashes.values.flatten.toList, scores)
       secondaryParents = parents.filter(_ != newMainParent)
       sortedSecParents = secondaryParents
         .sortBy(b => scores.getOrElse(b, 0L) -> b.toStringUtf8)
@@ -101,13 +110,13 @@ object Estimator {
   def lmdScoring[F[_]: MonadThrowable](
       dag: DagRepresentation[F],
       stopHash: BlockHash,
-      latestMessageHashes: Map[Validator, BlockHash],
+      latestMessageHashes: Map[Validator, Set[BlockHash]],
       equivocatingValidators: Set[Validator]
   ): F[Map[BlockHash, Long]] =
     latestMessageHashes.toList.foldLeftM(Map.empty[BlockHash, Long]) {
-      case (acc, (validator, latestMessageHash)) =>
+      case (acc, (validator, latestMessageHashes)) =>
         DagOperations
-          .bfTraverseF[F, BlockHash](List(latestMessageHash))(
+          .bfTraverseF[F, BlockHash](latestMessageHashes.toList)(
             hash => dag.lookup(hash).map(_.get.parents.take(1).toList)
           )
           .takeUntil(_ == stopHash)

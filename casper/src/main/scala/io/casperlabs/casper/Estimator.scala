@@ -67,14 +67,21 @@ object Estimator {
         blocks: List[BlockHash],
         scores: Map[BlockHash, Long]
     ): F[List[BlockHash]] =
-      for {
-        children <- blocks.flatTraverse(getChildrenOrSelf(_, scores)).map(_.distinct)
-        result <- if (blocks.toSet == children.toSet) {
-                   children.pure[F]
-                 } else {
-                   tipsOfLatestMessages(children, scores)
-                 }
-      } yield result
+      if (blocks.isEmpty) {
+        // In the case of empty set of validators' messages.
+        // This is the very first block in the DAG (not counting Genesis),
+        // so it builds on top of it.
+        List(genesis).pure[F]
+      } else {
+        for {
+          children <- blocks.flatTraverse(getChildrenOrSelf(_, scores)).map(_.distinct)
+          result <- if (blocks.toSet == children.toSet) {
+                     children.pure[F]
+                   } else {
+                     tipsOfLatestMessages(children, scores)
+                   }
+        } yield result
+      }
 
     for {
       lca <- if (latestMessageHashes.isEmpty) genesis.pure[F]
